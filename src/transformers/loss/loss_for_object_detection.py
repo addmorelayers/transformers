@@ -156,7 +156,7 @@ class ImageLoss(nn.Module):
         losses = {"cardinality_error": card_err}
         return losses
 
-    def loss_boxes(self, outputs, targets, indices, num_boxes):
+    def loss_boxes(self, outputs, targets, indices, num_boxes, focal_alpha=2.0, focal_gamma=2.0):
         """
         Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss.
 
@@ -171,18 +171,21 @@ class ImageLoss(nn.Module):
 
         loss_bbox = nn.functional.l1_loss(source_boxes, target_boxes, reduction="none")
 
-        # Apply sqrt(area) scaling if "areas" key is in targets
+        # Calculate the area-based weights
         if "areas" in targets[0]:
             target_areas = torch.cat([t["areas"][i] for t, (_, i) in zip(targets, indices)], dim=0)
-            target_areas = target_areas.clamp(min=0.05).view(-1, 1)
-            # target_areas_sqrt = torch.sqrt(target_areas)
-            target_areas_sqrt = target_areas
+            target_areas = target_areas.clamp(min=0.05).view(-1, 1)  # Avoid zero or near-zero areas
+            target_areas_sqrt = torch.sqrt(target_areas)
+            # Compute area-based weights (inverse sqrt for focal-like effect)
+            area_weights = 1 / target_areas_sqrt
         else:
-            # Default to no scaling if area information is missing
-            target_areas_sqrt = torch.ones(loss_bbox.shape[0], 1, device=loss_bbox.device)
+            # Default weights if no area information is provided
+            area_weights = torch.ones(loss_bbox.shape[0], 1, device=loss_bbox.device)
 
-        # Scale loss_bbox by sqrt(area)
-        loss_bbox = loss_bbox / target_areas_sqrt
+        # Apply focal-like weighting
+        # Focal Loss scaling: ((1 - weight) ^ gamma) * alpha
+        focal_weights = (1 - area_weights) ** focal_gamma * focal_alpha
+        loss_bbox = (loss_bbox * focal_weights).sum() / num_boxes
 
         losses = {}
         losses["loss_bbox"] = loss_bbox.sum() / num_boxes
@@ -190,7 +193,7 @@ class ImageLoss(nn.Module):
         loss_giou = 1 - torch.diag(
             generalized_box_iou(center_to_corners_format(source_boxes), center_to_corners_format(target_boxes))
         )
-        loss_giou = loss_giou / target_areas_sqrt.view(-1)  # Scale GIoU loss by sqrt(area)
+        loss_giou = (loss_giou * focal_weights.view(-1)).sum() / num_boxes
 
         losses["loss_giou"] = loss_giou.sum() / num_boxes
         return losses
