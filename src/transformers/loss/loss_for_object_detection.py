@@ -171,12 +171,26 @@ class ImageLoss(nn.Module):
 
         loss_bbox = nn.functional.l1_loss(source_boxes, target_boxes, reduction="none")
 
+        # Apply sqrt(area) scaling if "areas" key is in targets
+        if "areas" in targets[0]:
+            target_areas = torch.cat([t["areas"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+            target_areas = target_areas.clamp(min=0.05).view(-1, 1)
+            target_areas_sqrt = torch.sqrt(target_areas)
+        else:
+            # Default to no scaling if area information is missing
+            target_areas_sqrt = torch.ones(loss_bbox.shape[0], 1, device=loss_bbox.device)
+
+        # Scale loss_bbox by sqrt(area)
+        loss_bbox = loss_bbox / target_areas_sqrt
+
         losses = {}
         losses["loss_bbox"] = loss_bbox.sum() / num_boxes
 
         loss_giou = 1 - torch.diag(
             generalized_box_iou(center_to_corners_format(source_boxes), center_to_corners_format(target_boxes))
         )
+        loss_giou = loss_giou / target_areas_sqrt.view(-1)  # Scale GIoU loss by sqrt(area)
+
         losses["loss_giou"] = loss_giou.sum() / num_boxes
         return losses
 
