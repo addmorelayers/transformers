@@ -175,7 +175,8 @@ class ImageLoss(nn.Module):
         if "areas" in targets[0]:
             target_areas = torch.cat([t["areas"][i] for t, (_, i) in zip(targets, indices)], dim=0)
             target_areas = target_areas.clamp(min=0.05).view(-1, 1)
-            target_areas_sqrt = torch.sqrt(target_areas)
+            # target_areas_sqrt = torch.sqrt(target_areas)
+            target_areas_sqrt = target_areas
         else:
             # Default to no scaling if area information is missing
             target_areas_sqrt = torch.ones(loss_bbox.shape[0], 1, device=loss_bbox.device)
